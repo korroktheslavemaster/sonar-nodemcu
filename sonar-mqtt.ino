@@ -23,7 +23,9 @@
 
 */
 
+#include "FS.h"
 #include <ESP8266WiFi.h>
+#include <ESP8266WiFiMulti.h>
 #include <PubSubClient.h>
 #include <time.h>                       // time() ctime()
 #include <sys/time.h>                   // struct timeval
@@ -44,22 +46,27 @@ const float TANK_FULL_DISTANCE_CM = 14.83; // distance at which 'aap ki paani ki
 const float TANK_DEPTH_CM = 109.982; // 43.3 inches
 
 // Update these with values suitable for your network.
+ESP8266WiFiMulti wifiMulti;
 
-const char* ssid = "Anurag 2";
-const char* password = "pavilion";
+//const char* ssid = "Anurag 2";
+//const char* password = "pavilion";
+//const char* ssid = "Specialists_clinic1";
+//const char* password = "pavilionc14";
+
 //const char* mqtt_server = "test.mosquitto.org";
-const char* mqtt_server = "mqtt.thingspeak.com";
-const int mqtt_port = 1883;
+const char* mqtt_server = "a3dnhghs2v16ap.iot.us-east-1.amazonaws.com";
+const int mqtt_port = 8883;
 //const char* mqtt_server = "m10.cloudmqtt.com";
-const char* mqtt_username = "a-unique-username";
-const char* mqtt_password = "ZTO2255CUWOK0RIU";
-const char* STATUS_TOPIC = "channels/507497/publish/4M5ZYM7CDET6C3J5";
-const char* MOTOR_TOPIC = "channels/507509/subscribe/fields/field1/TPBLNPPKS1DQFTBR";
+const char* STATUS_TOPIC = "status";
+const char* MOTOR_TOPIC = "motor";
 
 bool isManuallySwitchedOnFlag = false;
 
-WiFiClient espClient;
-PubSubClient client(espClient);
+void callback(char* topic, byte* payload, unsigned int length);
+
+WiFiClientSecure espClient;
+//PubSubClient client(espClient);
+PubSubClient client(mqtt_server, mqtt_port, callback, espClient);
 long lastMsg = 0;
 double distances[5];
 int n_distances = sizeof(distances)/sizeof(distances[0]);
@@ -72,13 +79,16 @@ void setup_wifi() {
   delay(10);
   // We start by connecting to a WiFi network
   Serial.println();
-  Serial.print("Connecting to ");
-  Serial.println(ssid);
+  Serial.print("Connecting to something..");
+//  Serial.println(ssid);
 
-  WiFi.begin(ssid, password);
-
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
+//  WiFi.begin(ssid, password);
+  WiFi.mode(WIFI_STA);  
+  wifiMulti.addAP("Anurag 2", "pavilion");
+  wifiMulti.addAP("Specialists_clinic1", "pavilionc14");
+  
+  while (wifiMulti.run() != WL_CONNECTED) {
+    delay(1000);
     Serial.print(".");
   }
   
@@ -125,26 +135,10 @@ struct Status getStatus() {
 }
 
 void sendStatus(struct Status s1) {
-//  snprintf(msg, 199, "{\"distance\": %.3lf, \"percentage\": %.5lf, \"motor\": %d, \"timestamp\": %ld }", s1.distance, s1.percentage, s1.motor, s1.timestamp);
-  // for thingspeak:
-  snprintf(msg, 199, "field1=%.3lf&field2=%.3lf&field3=%d&field4=%ld", s1.distance, s1.percentage * 100, s1.motor, s1.timestamp);
+  snprintf(msg, 199, "{\"distance\": %.3lf, \"percentage\": %.3lf, \"motor\": %d, \"timestamp\": %ld }", s1.distance, s1.percentage * 100, s1.motor, s1.timestamp);
   Serial.println(msg);
   client.publish(STATUS_TOPIC, msg);
 }
-
-void writeMotor(bool val, bool manual = false);
-
-void writeMotor(bool val, bool manual) {
-  // digitalWrite both motor and led pin
-  if (val && manual) {
-    isManuallySwitchedOnFlag = true;
-  } else {
-    isManuallySwitchedOnFlag = false;
-  }
-  digitalWrite(MOTOR, val);
-  digitalWrite(MOTOR_LED, val);
-}
-
 
 void callback(char* topic, byte* payload, unsigned int length) {
   Serial.print("Message arrived [");
@@ -169,6 +163,22 @@ void callback(char* topic, byte* payload, unsigned int length) {
 
 }
 
+void writeMotor(bool val, bool manual = false);
+
+void writeMotor(bool val, bool manual) {
+  // digitalWrite both motor and led pin
+  if (val && manual) {
+    isManuallySwitchedOnFlag = true;
+  } else {
+    isManuallySwitchedOnFlag = false;
+  }
+  digitalWrite(MOTOR, val);
+  digitalWrite(MOTOR_LED, val);
+}
+
+
+
+
 void reconnect() {
   // Loop until we're reconnected
   while (!client.connected()) {
@@ -177,7 +187,7 @@ void reconnect() {
     String clientId = "ESP8266-";
     clientId += String(random(0xffff), HEX);
     // Attempt to connect
-    if (client.connect(clientId.c_str(), mqtt_username, mqtt_password)) {
+    if (client.connect("espThing")) {
       Serial.println("connected");
       // Once connected, publish an announcement...
 //      client.publish(OUT_TOPIC, "hello world");
@@ -201,9 +211,45 @@ void setup() {
   digitalWrite(ANNOYING_LED, HIGH);
   pinMode(ECHO, INPUT);
   Serial.begin(115200);
+  Serial.setDebugOutput(true);
   setup_wifi();
-  client.setServer(mqtt_server, mqtt_port);
-  client.setCallback(callback);
+
+  if (!SPIFFS.begin()) {
+    Serial.println("Failed to mount file system");
+    return;
+  }
+//  client.setServer(mqtt_server, mqtt_port);
+//  client.setCallback(callback);
+  // Load certificate file
+  File cert = SPIFFS.open("/cert.der", "r"); //replace cert.crt eith your uploaded file name
+  if (!cert) {
+    Serial.println("Failed to open cert file");
+  }
+  else
+    Serial.println("Success to open cert file");
+
+  delay(1000);
+
+  if (espClient.loadCertificate(cert))
+    Serial.println("cert loaded");
+  else
+    Serial.println("cert not loaded");
+
+  // Load private key file
+  File private_key = SPIFFS.open("/private.der", "r"); //replace private eith your uploaded file name
+  if (!private_key) {
+    Serial.println("Failed to open private cert file");
+  }
+  else
+    Serial.println("Success to open private cert file");
+
+  delay(1000);
+
+  if (espClient.loadPrivateKey(private_key))
+    Serial.println("private key loaded");
+  else
+    Serial.println("private key not loaded");
+
 }
 
 double getDistance() {
